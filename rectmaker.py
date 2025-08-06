@@ -67,8 +67,6 @@ class RectangleTool:
 
         self.selected_rect = None
         self.drag_offset = (0,0)
-        self.prev_drag = (-1,-1)
-        self.prev_scale = 0.0
 
         self.resize_mode = None
         self.handle_size = 6
@@ -497,8 +495,6 @@ class RectangleTool:
 
         
         self.canvas.create_image(draw_x, draw_y, anchor="nw", image=self.tk_image)  
-        
-        self.prev_scale = self.scale
             
         self.canvas_images = []
 
