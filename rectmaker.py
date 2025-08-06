@@ -6,6 +6,7 @@ from PIL import Image, ImageTk
 import random
 import copy
 import math
+import os
 
 class RectangleTool:
     def __init__(self, master):
@@ -57,6 +58,9 @@ class RectangleTool:
         self.start_x = 0
         self.start_y = 0
         self.copied_rect = None
+
+        self.unsaved_changes = False
+        self.redraw_background = False
 
         self.image = None
         self.tk_image = None
@@ -148,8 +152,11 @@ class RectangleTool:
         if not path:
             return
         self.load_image_from_path(path)
+        self.update_window_title()
+            
         
     def load_image_from_path(self,path):
+        self.image = None
         self.image = Image.open(path)
         self.rectangles.clear()
         self.undo_stack.clear()
@@ -158,9 +165,13 @@ class RectangleTool:
         self.scale = 1.0
         self.offset_x = 0
         self.offset_y = 0
+        self.redraw_background = True
         self.redraw()
 
     def export_rectangles(self):
+        if not self.rectangles:
+            return
+        
         file = filedialog.asksaveasfilename(defaultextension=".rect", filetypes=[("Rect Files", "*.rect")])
         if file:
             self.export_rectangles_to_path(file)
@@ -178,14 +189,34 @@ class RectangleTool:
                 f.write(f"\t\t\"max\" \"{x1} {y1}\"\n")
                 f.write("\t}\n")
             f.write("}")
-            self.current_rect_file = file
+        self.current_rect_file = file
+        self.update_window_title()
 
     def import_rectangles(self):
+        if not self.image:
+            return
         file = filedialog.askopenfilename(filetypes=[("Rectangle Files", "*.rect")])
         if not file:
             return
         self.import_rectangles_from_path(file)
         self.current_rect_file = file
+        self.update_window_title()
+
+    def update_window_title(self):
+        if self.current_rect_file:
+            filename = os.path.basename(self.current_rect_file)
+            if self.unsaved_changes == True:
+                self.master.title(f"RectMaker - *{filename}")
+            else:
+                self.master.title(f"RectMaker - {filename}")
+        else:
+            if not self.image:
+                self.master.title("RectMaker")
+            else:
+                if not self.rectangles:
+                    self.master.title("RectMaker - Untitled")
+                else:
+                    self.master.title("RectMaker - *Untitled")
 
     def import_rectangles_from_path(self,file):
         try:
@@ -193,8 +224,6 @@ class RectangleTool:
                 lines = f.readlines()
 
             self.rectangles.clear()
-            self.canvas_items.clear()
-
             i = 0
 
             while i < len(lines):
@@ -240,10 +269,14 @@ class RectangleTool:
             self.import_rectangles_from_path(path)
 
     def save(self,event=None):
+        if not self.rectangles:
+            return
         if self.current_rect_file:
             self.export_rectangles_to_path(self.current_rect_file)
         else:
             self.export_rectangles()
+        self.unsaved_changes = False
+        self.update_window_title()
 
     def to_image_coords(self, screen_x, screen_y):
         ix = int((screen_x - self.offset_x) / self.scale)
@@ -453,6 +486,7 @@ class RectangleTool:
         self.current_rect = None
         self.redraw()
         self.update_fields_from_selected()
+        self.update_window_title()
 
 
     # --- Redrawing Everything ---
@@ -460,7 +494,6 @@ class RectangleTool:
         self.canvas.delete("all")
         if not self.image:
             return
-
 
         canvas_width = self.canvas.winfo_width()
         canvas_height = self.canvas.winfo_height()
@@ -471,13 +504,14 @@ class RectangleTool:
 
 
         # Draw scaled image
-        if self.cached_background is None or self.scale != self.cached_scale:
+        if self.cached_background is None or self.scale != self.cached_scale or self.redraw_background is True:
             display_img = self.image.resize(
                 (int(self.image.width * self.scale), int(self.image.height * self.scale)),
                 resample=Image.NEAREST
             )
             self.cached_background = display_img
             self.cached_scale = self.scale
+            self.redraw_background = False
 
         src_x0 = max(0,int(-self.offset_x))
         src_y0 = max(0,int(-self.offset_y))
@@ -637,6 +671,8 @@ class RectangleTool:
     def save_undo_state(self):
         self.undo_stack.append(copy.copy(self.rectangles))
         self.redo_stack.clear()
+        self.unsaved_changes = True
+        self.update_window_title()
 
     def undo(self):
         if not self.undo_stack:
