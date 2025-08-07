@@ -3,6 +3,7 @@ import tkinter as tk
 
 from tkinter import filedialog
 from PIL import Image, ImageTk
+from sourcepp import vtfpp
 import random
 import copy
 import math
@@ -142,22 +143,25 @@ class RectangleTool:
         print(f"Key pressed: keysym={event.keysym}, keycode={event.keycode}, char={event.char}")
 
 
-
     def on_window_resize(self,event):
         print("Window Resize Dected\n")
         self.redraw()
 
     def load_image(self):
-        path = filedialog.askopenfilename(filetypes=[("Image Files", "*.png;*.jpg;*.jpeg;*.bmp")])
+        path = filedialog.askopenfilename(filetypes=[("Image Files", "*.png;*.jpg;*.jpeg;*.bmp;*.tif;*.tiff;*.webp;*.qoi;*.psd;*.vtf")])
         if not path:
             return
         self.load_image_from_path(path)
         self.update_window_title()
-            
-        
+
     def load_image_from_path(self,path):
         self.image = None
-        self.image = Image.open(path)
+        if path.endswith(".vtf"):
+            vtf = vtfpp.VTF(path)
+            if vtf:
+                self.image = Image.frombuffer('RGB', (vtf.width_for_mip(0), vtf.height_for_mip(0)), vtf.get_image_data_as(vtfpp.ImageFormat.RGB888))
+        else:
+            self.image = Image.open(path)
         self.rectangles.clear()
         self.undo_stack.clear()
         self.redo_stack.clear()
