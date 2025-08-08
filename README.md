@@ -20,3 +20,21 @@ Ctrl + Arrows - Adjust bottom and left edges of selected rectangle
 G - Toggle grid
 
 +/- - Adjust grid size
+
+
+# How To Compile:
+
+To compile, you'll need the following:
+
+Pillow
+```
+pip install pillow
+```
+TkinterDnD2
+```
+pip install tkinterdnd2
+```
+SourcePP
+```
+pip install sourcepp
+```
