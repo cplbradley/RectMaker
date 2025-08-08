@@ -2,12 +2,14 @@ from tkinterdnd2 import DND_FILES, TkinterDnD
 import tkinter as tk
 
 from tkinter import filedialog
+from tkinter import messagebox
 from PIL import Image, ImageTk
 from sourcepp import vtfpp
-import random
-import copy
-import math
-import os
+import random, copy, math, os, re
+from pathlib import Path
+
+
+supported_formats = (".png",".jpg",".jpeg",".bmp",".tif","tiff",".webp",".psd",".vtf")
 
 class RectangleTool:
     def __init__(self, master):
@@ -46,6 +48,11 @@ class RectangleTool:
             "h": tk.StringVar()
         }
 
+        self.scale_vars = {
+            "X Scale": tk.StringVar(),
+            "Y Scale": tk.StringVar()
+        }
+
         for i, key in enumerate(["x","y","w","h"]):
             tk.Label(self.sidebar,text=key.upper()).grid(row=i,column=0,sticky="w")
             entry = tk.Entry(self.sidebar,textvariable=self.coord_vars[key],width=10)
@@ -53,7 +60,7 @@ class RectangleTool:
             entry.bind("<Return>",self.update_selected_from_fields)
         self.canvas.pack(fill="both", expand=True)
 
-
+        self.scale_window = None
         self.rectangles = []
         self.current_rect = None
         self.start_x = 0
@@ -79,6 +86,9 @@ class RectangleTool:
         self.cached_background = None
         self.cached_scale = None
 
+        self.background_image = None
+        self.transparent_rectangles = []
+        
         self.create_menu()
         self.bind_events()
 
@@ -97,8 +107,10 @@ class RectangleTool:
 
         file_menu = tk.Menu(menu, tearoff=0)
         menu.add_cascade(label="File", menu=file_menu)
-        file_menu.add_command(label="Import Image", command=self.load_image)
-        file_menu.add_command(label="Open", command=self.import_rectangles)
+        #file_menu.add_command(label="Import Image", command=self.load_image)
+        #file_menu.add_command(label="Open .rect", command=self.import_rectangles)
+        #file_menu.add_command(label="Open .vmt",command=self.open_vmt)
+        file_menu.add_command(label="Open",command= self.open_file)
         file_menu.add_command(label="Save", command=self.save)
         file_menu.add_command(label="Save As...",command=self.export_rectangles)
         file_menu.add_separator()
@@ -108,6 +120,10 @@ class RectangleTool:
         edit_menu.add_command(label="Undo",command=self.undo, accelerator = "Ctrl+Z")
         edit_menu.add_command(label="Redo",command=self.redo,accelerator="Ctrl+Y")
         menu.add_cascade(label="Edit",menu=edit_menu)
+
+        tools_menu = tk.Menu(menu,tearoff=0)
+        tools_menu.add_command(label="Rescale Rectangles",command=self.open_scale_window,accelerator = "Ctrl+M")
+        menu.add_cascade(label="Tools",menu=tools_menu)
 
     def bind_events(self):
         self.canvas.bind("<Button-1>", self.on_left_mouse_down)
@@ -138,6 +154,42 @@ class RectangleTool:
         self.master.bind("<plus>",self.increase_grid)
         self.master.bind("<KP_Subtract>",self.decrease_grid)
         self.master.bind("<Key>", self.debug_key)
+        self.master.bind("<Control-m>",self.open_scale_window)
+    
+    def open_image_error_window(self):
+        messagebox.showinfo("Message","You tried to open a .rect file without an image loaded. Open an image first!")
+        
+
+    def open_scale_window(self,event):
+        if self.scale_window is not None:
+            return
+        window = tk.Toplevel(self.master,width = 150)
+        window.title = "Scale Rectangles"
+        for i, key in enumerate(["X Scale","Y Scale"]):
+            tk.Label(window,text=key).grid(row=i,column=0,sticky="w")
+            entry = tk.Entry(window,textvariable=self.scale_vars[key],width=10)
+            entry.grid(row=i, column=1, pady=2, padx=5)
+            window.bind("<Return>",self.rescale_rectangles)
+        self.scale_window = window
+
+        window.protocol("WM_DELETE_WINDOW", self.on_close_scale_window())
+
+    def on_close_scale_window(self):
+        self.scale_window = None
+
+    def rescale_rectangles(self,event):
+        for idx, r in enumerate(self.rectangles):
+            x0,y0,x1,y1,fill,image,scaled_image,scale = r
+            x = float(self.scale_vars["X Scale"].get())
+            y = float(self.scale_vars["Y Scale"].get())
+            x0 *= x
+            x1 *= x
+            y0 *= y
+            y1 *= y
+            self.rectangles[idx] = (int(x0),int(y0),int(x1),int(y1),fill,image,scaled_image,scale)
+            self.redraw()
+
+
 
     def debug_key(self,event):
         print(f"Key pressed: keysym={event.keysym}, keycode={event.keycode}, char={event.char}")
@@ -147,14 +199,19 @@ class RectangleTool:
         print("Window Resize Dected\n")
         self.redraw()
 
-    def load_image(self):
-        path = filedialog.askopenfilename(filetypes=[("Image Files", "*.png;*.jpg;*.jpeg;*.bmp;*.tif;*.tiff;*.webp;*.qoi;*.psd;*.vtf")])
+    def open_file(self):
+        path = filedialog.askopenfilename(filetypes=[("Images, Rects, VMT's", "*.png;*.jpg;*.jpeg;*.bmp;*.tif;*.tiff;*.webp;*.qoi;*.psd;*.vtf;*.vmt;*.rect")])
         if not path:
             return
-        self.load_image_from_path(path)
-        self.update_window_title()
+        if path.endswith(".rect"):
+            self.import_rectangles_from_path(path)
+        elif path.endswith(".vmt"):
+            self.parse_vmt(path)
+        else:
+            self.load_image_from_path(path)
 
     def load_image_from_path(self,path):
+        print(f"load path {path}")
         self.image = None
         if path.endswith(".vtf"):
             vtf = vtfpp.VTF(path)
@@ -196,15 +253,11 @@ class RectangleTool:
         self.current_rect_file = file
         self.update_window_title()
 
-    def import_rectangles(self):
-        if not self.image:
-            return
-        file = filedialog.askopenfilename(filetypes=[("Rectangle Files", "*.rect")])
+    def open_vmt(self):
+        file = filedialog.askopenfilename(filetypes=[(".vmt Files", "*.vmt")])
         if not file:
             return
-        self.import_rectangles_from_path(file)
-        self.current_rect_file = file
-        self.update_window_title()
+        self.parse_vmt(file)
 
     def update_window_title(self):
         if self.current_rect_file:
@@ -222,7 +275,65 @@ class RectangleTool:
                 else:
                     self.master.title("RectMaker - *Untitled")
 
+    def parse_vmt(self,file):
+        try:
+            print(f"{file}")
+            with open(file,"r") as f:
+                lines = f.readlines()
+
+                texture_parse = re.compile(r'^\s*"?\$basetexture"?\s+"?([^"\s]+)"?')
+                rect_parse = re.compile(r'^\s*"?%rectanglemap"?\s+"?([^"\s]+)"?')
+
+                for line in lines:
+                    texture = texture_parse.match(line)
+                    rectfile = rect_parse.match(line)
+                    if texture:
+                        relative = texture.group(1).strip()
+                        if Path(relative).suffix == "":
+                            relative += ".vtf"
+                        
+                        tex_path = self.resolve_absolute_path(file,relative)
+                        
+                        tex_path = Path(tex_path).as_posix()
+                        final_path = str(tex_path)
+                        print(f"final path {tex_path}")
+                        self.load_image_from_path(final_path)
+                        
+
+                    if rectfile:
+                        relative = rectfile.group(1).strip()
+                        relative_path = Path(relative)
+                        if relative_path.suffix == "":
+                            relative += ".rect"
+                        rect_path = self.resolve_absolute_path(file,relative)
+                        rect_path = Path(rect_path).as_posix()
+                        final_path = str(rect_path)
+                        self.import_rectangles_from_path(str(final_path))
+
+        except ValueError as e:
+            print(f"Error reading .vmt, Exception: {e}")
+
+    def resolve_absolute_path(self,vmt,path):
+        try:
+            vmt_dir = Path(vmt).parent
+            print(f"{vmt_dir}")
+            dir = str(vmt_dir)
+            abspath = dir.partition("materials")
+            dir = abspath[0] + abspath[1] + "/" + path
+            absdir = Path(dir).absolute()
+            print(f"dir {absdir}")
+            return str(absdir)
+        except Exception as e:
+            print("failed to resolve absolute path")
+
+        
+
     def import_rectangles_from_path(self,file):
+        print(f"rectpath: {file}")
+        if self.image is None:
+            self.open_image_error_window()
+            return
+        
         try:
             with open(file,"r") as f:
                 lines = f.readlines()
@@ -259,6 +370,8 @@ class RectangleTool:
                 else:
                     i += 1
             self.selected_rect = None
+            self.redraw_background = True
+            self.current_rect_file = file
             self.redraw()
             print(f"Imported {len(self.rectangles)} rectangles from file.")
         except Exception as e:
@@ -267,10 +380,12 @@ class RectangleTool:
     def on_drop(self,event):
         path = event.data.strip('{}')
         print(f"Dropped: {path}")
-        if path.lower().endswith((".png",".jpg",".jpeg",".bmp")):
+        if path.lower().endswith(supported_formats):
             self.load_image_from_path(path)
         elif path.lower().endswith(".rect"):
             self.import_rectangles_from_path(path)
+        elif path.lower().endswith(".vmt"):
+            self.parse_vmt(path)
 
     def save(self,event=None):
         if not self.rectangles:
@@ -492,10 +607,17 @@ class RectangleTool:
         self.update_fields_from_selected()
         self.update_window_title()
 
-
+    def clear_canvas(self):
+        all_items = self.canvas.find_all()
+        background = self.canvas.find_withtag("background")
+        rectangles = self.canvas.find_withtag("rectangles")
+        delete_items = set(all_items) - set(background) - set(rectangles)
+        for item in delete_items:
+            self.canvas.delete(item)
+        
     # --- Redrawing Everything ---
     def redraw(self):
-        self.canvas.delete("all")
+        self.clear_canvas()
         if not self.image:
             return
 
@@ -531,25 +653,42 @@ class RectangleTool:
         else:
             self.tk_image = ImageTk.PhotoImage(self.cached_background)
 
+
+        if self.background_image is None:
+            self.background_image = self.canvas.create_image(draw_x, draw_y, anchor="nw", image=self.tk_image,tags = "background")
+        else:
+            self.canvas.coords(self.background_image,draw_x,draw_y)
+            self.canvas.itemconfig(self.background_image,image=self.tk_image)
         
-        self.canvas.create_image(draw_x, draw_y, anchor="nw", image=self.tk_image)  
             
         self.canvas_images = []
+
+        while len(self.transparent_rectangles) < len(self.rectangles):
+            self.transparent_rectangles.append(None)
 
         for idx, r in enumerate(self.rectangles):
             
             x0,y0,x1,y1, fill, image,scaled_image,zoom_scale = r
 
-            if x1 < visible_left or x0 > visible_right or y1 < visible_top or y0 > visible_bottom: #ignore rectangles that are outside of our canvas bounds
+            if x1 < visible_left or x0 > visible_right or y1 < visible_top or y0 > visible_bottom:#ignore rectangles that are outside of our canvas bounds
+                if self.transparent_rectangles[idx] is not None:
+                    tags = self.canvas.gettags(self.transparent_rectangles[idx])
+                    if "rectangles" in tags:
+                        self.canvas.dtag(self.transparent_rectangles[idx],"rectangles")
+                        self.transparent_rectangles[idx] = None
+                        print("Trans Rect outside screen, deleting\n")
                 continue
 
-            w = math.ceil(x1 - x0)
-            h = math.ceil(y1 - y0)
+            w = int(x1 - x0)
+            h = int(y1 - y0)
             zw = max(1,int(w * self.scale))
             zh = max(1,int(h * self.scale))
+            zw2 = int(image.width * self.scale)
+            zh2 = int(image.height * self.scale)
 
-            if self.scale != zoom_scale or image.width != zw or image.height != zh:
+            if self.scale != zoom_scale or zw2 != zw or zh2 != zh:
                 print("Scale changed, resizing rectangle image\n")
+                print(f"w = {zw} h = {zh} w2 = {zw2} h2 = {zh2}")
                 zi = image.resize((zw,zh),Image.NEAREST)
                 scaled_image = ImageTk.PhotoImage(zi)
                 self.rectangles[idx] = (x0,y0,x1,y1,fill,image,scaled_image,self.scale)
@@ -568,7 +707,14 @@ class RectangleTool:
             width = 3 if idx == self.selected_rect else 1
             textfill = "white" if idx == self.selected_rect else "black"
 
-            self.canvas.create_image(sx0,sy0,anchor="nw",image = scaled_image)
+            if self.transparent_rectangles[idx] is None:
+                self.transparent_rectangles[idx] = self.canvas.create_image(sx0,sy0,anchor="nw",image = scaled_image,tags = "rectangles")
+                print("trans rect not found, creating\n")
+            else:
+                self.canvas.coords(self.transparent_rectangles[idx],sx0,sy0)
+                self.canvas.itemconfig(self.transparent_rectangles[idx],image=scaled_image)
+                print("trans rect found, moving\n")
+                
             self.canvas.create_rectangle(sx0,sy0,sx1,sy1,outline=outline,width=1)
             self.canvas.create_text(textx,texty,text=f"#{idx}",fill=textfill)           
 
@@ -598,6 +744,7 @@ class RectangleTool:
     def delete_selected_rectangle(self,event=None):
         if self.selected_rect is not None:
             del self.rectangles[self.selected_rect]
+            self.canvas.destroy(self.transparent_rectangles[self.selected_rect])
             self.selected_rect = None
             self.redraw()
             self.update_rectangle_list()
@@ -647,7 +794,7 @@ class RectangleTool:
         alpha = 120
         r,g,b = fill
         rgba = (r,g,b,alpha)
-        image = Image.new("RGBA",(4,4),rgba)
+        image = Image.new("RGBA",(width,height),rgba)
         return image
 
     def update_rectangle_list(self):
