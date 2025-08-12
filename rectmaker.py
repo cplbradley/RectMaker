@@ -1,8 +1,6 @@
 from tkinterdnd2 import DND_FILES, TkinterDnD
 import tkinter as tk
-
-from tkinter import filedialog
-from tkinter import messagebox
+from tkinter import filedialog, messagebox
 from PIL import Image, ImageTk
 from sourcepp import vtfpp
 import random, copy, math, os, re
@@ -316,12 +314,10 @@ class RectangleTool:
     def resolve_absolute_path(self,vmt,path):
         try:
             vmt_dir = Path(vmt).parent
-            print(f"{vmt_dir}")
             dir = str(vmt_dir)
             abspath = dir.partition("materials")
             dir = abspath[0] + abspath[1] + "/" + path
             absdir = Path(dir).absolute()
-            print(f"dir {absdir}")
             return str(absdir)
         except Exception as e:
             print("failed to resolve absolute path")
@@ -663,6 +659,11 @@ class RectangleTool:
             
         self.canvas_images = []
 
+        while len(self.transparent_rectangles) > len(self.rectangles):
+            bogus_id = self.transparent_rectangles.pop()
+            if bogus_id is not None:
+                self.canvas.delete(bogus_id)
+
         while len(self.transparent_rectangles) < len(self.rectangles):
             self.transparent_rectangles.append(None)
 
@@ -672,11 +673,13 @@ class RectangleTool:
 
             if x1 < visible_left or x0 > visible_right or y1 < visible_top or y0 > visible_bottom:#ignore rectangles that are outside of our canvas bounds
                 if self.transparent_rectangles[idx] is not None:
-                    tags = self.canvas.gettags(self.transparent_rectangles[idx])
-                    if "rectangles" in tags:
-                        self.canvas.dtag(self.transparent_rectangles[idx],"rectangles")
-                        self.transparent_rectangles[idx] = None
-                        print("Trans Rect outside screen, deleting\n")
+                    self.canvas.delete(self.transparent_rectangles[idx])
+                    self.transparent_rectangles[idx] = None
+                   # tags = self.canvas.gettags(self.transparent_rectangles[idx])
+                   # if "rectangles" in tags:
+                    #    self.canvas.dtag(self.transparent_rectangles[idx],"rectangles")
+                     #   self.transparent_rectangles[idx] = None
+                      #  print("Trans Rect outside screen, deleting\n")
                 continue
 
             w = int(x1 - x0)
@@ -685,6 +688,12 @@ class RectangleTool:
             zh = max(1,int(h * self.scale))
             zw2 = int(image.width * self.scale)
             zh2 = int(image.height * self.scale)
+
+            if zw < 1 or zh < 1:
+                if self.transparent_rectangles[idx] is not None:
+                    self.canvas.delete(self.transparent_rectangles[idx])
+                    self.transparent_rectangles[idx] = None
+                continue
 
             if self.scale != zoom_scale or zw2 != zw or zh2 != zh:
                 print("Scale changed, resizing rectangle image\n")
@@ -697,7 +706,7 @@ class RectangleTool:
             sx0, sy0 = self.to_screen_coords(x0, y0)
             sx1, sy1 = self.to_screen_coords(x1, y1)
             
-            self.canvas_images.append(scaled_image)
+            #self.canvas_images.append(scaled_image)
 
             textx = int(sx0 + (zw * 0.5))
             texty = int(sy0 + (zh * 0.5))
@@ -744,8 +753,9 @@ class RectangleTool:
     def delete_selected_rectangle(self,event=None):
         if self.selected_rect is not None:
             del self.rectangles[self.selected_rect]
-            self.canvas.destroy(self.transparent_rectangles[self.selected_rect])
+            
             self.selected_rect = None
+            self.clear_canvas()
             self.redraw()
             self.update_rectangle_list()
 
