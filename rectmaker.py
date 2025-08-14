@@ -856,7 +856,7 @@ class RectangleTool:
                 print("trans rect found, moving\n")
                 
             self.canvas.create_rectangle(sx0,sy0,sx1,sy1,outline=outline,width=1)
-            self.canvas.create_text(textx,texty,text=f"#{idx}",fill=textfill)           
+            self.canvas.create_text(textx,texty,text=f"#{idx + 1}",fill=textfill)           
 
             if idx == self.selected_rect:
                 corners = [(sx0,sy0),(sx1,sy0),(sx0,sy1),(sx1,sy1)]
@@ -944,7 +944,7 @@ class RectangleTool:
         for idx, (x0,y0,x1,y1,fill,*_) in enumerate(self.rectangles):
             w = abs(x1 - x0)
             h = abs(y1 - y0)
-            self.rect_list.insert(tk.END,f"#{idx} ({x0},{y0}) {w}x{h}")
+            self.rect_list.insert(tk.END,f"#{idx+1} ({x0},{y0}) {w}x{h}")
             r,g,b = fill
             color = self.rgb_to_hex(r,g,b)
             self.rect_list.itemconfig(tk.END,foreground=color)
