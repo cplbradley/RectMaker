@@ -46,11 +46,6 @@ class RectangleTool:
             "h": tk.StringVar()
         }
 
-        self.scale_vars = {
-            "X Scale": tk.StringVar(),
-            "Y Scale": tk.StringVar()
-        }
-
         for i, key in enumerate(["x","y","w","h"]):
             tk.Label(self.sidebar,text=key.upper()).grid(row=i,column=0,sticky="w")
             entry = tk.Entry(self.sidebar,textvariable=self.coord_vars[key],width=10)
@@ -67,6 +62,8 @@ class RectangleTool:
 
         self.unsaved_changes = False
         self.redraw_background = False
+
+        self.output_scale = 1.0
 
         self.image = None
         self.tk_image = None
@@ -109,8 +106,10 @@ class RectangleTool:
         #file_menu.add_command(label="Open .rect", command=self.import_rectangles)
         #file_menu.add_command(label="Open .vmt",command=self.open_vmt)
         file_menu.add_command(label="Open",command= self.open_file)
-        file_menu.add_command(label="Save", command=self.save)
+        file_menu.add_separator()
+        file_menu.add_command(label="Save", command=self.save,accelerator="Ctrl+S")
         file_menu.add_command(label="Save As...",command=self.export_rectangles)
+        
         file_menu.add_separator()
         file_menu.add_command(label="Exit", command=self.master.quit)
 
@@ -120,7 +119,8 @@ class RectangleTool:
         menu.add_cascade(label="Edit",menu=edit_menu)
 
         tools_menu = tk.Menu(menu,tearoff=0)
-        tools_menu.add_command(label="Rescale Rectangles",command=self.open_scale_window,accelerator = "Ctrl+M")
+        tools_menu.add_command(label="Move/Translate",command=self.open_scale_window,accelerator = "Ctrl+M")
+        tools_menu.add_command(label="Special Save",command=self.open_custom_save_window)
         menu.add_cascade(label="Tools",menu=tools_menu)
 
     def bind_events(self):
@@ -152,42 +152,113 @@ class RectangleTool:
         self.master.bind("<plus>",self.increase_grid)
         self.master.bind("<KP_Subtract>",self.decrease_grid)
         self.master.bind("<Key>", self.debug_key)
-        self.master.bind("<Control-m>",self.open_scale_window)
+        self.master.bind("<Control-m>",lambda e: self.open_scale_window())
     
     def open_image_error_window(self):
         messagebox.showinfo("Message","You tried to open a .rect file without an image loaded. Open an image first!")
         
+    def open_custom_save_window(self):
+        window = tk.Toplevel(self.master)
+        window.title = "Custom Save"
+        window.wm_attributes("-topmost",True)
+        savelabel = tk.Label(window,text="Save As:")
+        savelabel.grid(row=0,column=0,sticky="w")
+        file_path = tk.StringVar()
+        tk.Entry(window,textvariable=file_path,width=40).grid(row=0,column=1)
+        def browse_file():
+            path = filedialog.asksaveasfilename(defaultextension=".rect", filetypes=[("Rect Files", "*.rect")])
+            if path:
+                file_path.set(path)
+    
+        tk.Button(window,text="Browse...",command=browse_file).grid(row=0,column=3,sticky="w")
 
-    def open_scale_window(self,event):
+        tk.Label(window,text="Output Scale:").grid(row=1,column=0,sticky="w")
+        output_scale = tk.StringVar(value="1.0")
+        tk.Entry(window,textvariable=output_scale).grid(row=1,column=1,sticky="w")
+
+        def on_custom_save():
+            try:
+                path = file_path.get()
+                scale = float(output_scale.get())
+                self.output_scale = scale
+                if path:
+                    self.export_rectangles_to_path(path)
+                    self.current_rect_file = path
+                    self.update_window_title()
+                    window.destroy()
+            except ValueError:
+                tk.messagebox.showerror("Invalid Scale","Please enter a valid float value.")
+        
+        tk.Button(window,text="Save",command=on_custom_save).grid(row=2,column=1,pady=10)
+
+    def open_scale_window(self):
         if self.scale_window is not None:
             return
-        window = tk.Toplevel(self.master,width = 150)
-        window.title = "Scale Rectangles"
-        for i, key in enumerate(["X Scale","Y Scale"]):
-            tk.Label(window,text=key).grid(row=i,column=0,sticky="w")
-            entry = tk.Entry(window,textvariable=self.scale_vars[key],width=10)
-            entry.grid(row=i, column=1, pady=2, padx=5)
-            window.bind("<Return>",self.rescale_rectangles)
+        
+        xscale = tk.StringVar(value="1.0")
+        yscale = tk.StringVar(value="1.0")
+        xtranslate = tk.StringVar(value="0")
+        ytranslate = tk.StringVar(value="0")
+
+        window = tk.Toplevel(self.master)
+        window.title = "Move/Scale"
+        window.attributes("-topmost",True)
+        tk.Label(window,text="X Scale:").grid(row=0,column=0,sticky="w")
+        tk.Entry(window,textvariable=xscale).grid(row=0,column=1)
+        tk.Label(window,text="Y Scale:").grid(row=1,column=0,sticky="w")
+        tk.Entry(window,textvariable=yscale).grid(row=1,column=1)
+        tk.Label(window,text="X Move:").grid(row=0,column=2,sticky="w")
+        tk.Entry(window,textvariable=xtranslate).grid(row=0,column=3)
+        tk.Label(window,text="Y Move:").grid(row=1,column=2,sticky="w")
+        tk.Entry(window,textvariable=ytranslate).grid(row=1,column=3)
+
+        checkvar = tk.IntVar()
+
+        tk.Checkbutton(window,text="Apply to all",variable=checkvar,onvalue=1,offvalue=0).grid(row=2,column=1)
+
+        def apply():
+            self.handle_translation(float(xscale.get()),float(yscale.get()),int(xtranslate.get()),int(ytranslate.get()),checkvar.get())
+
+        tk.Button(window,text="Apply",command=apply).grid(row=2,column=2)
         self.scale_window = window
 
         window.protocol("WM_DELETE_WINDOW", self.on_close_scale_window())
 
     def on_close_scale_window(self):
         self.scale_window = None
+    def apply_translations(self,rect,xscale,yscale,xmove,ymove,all):
+            x0,y0,x1,y1,fill,image,scaled_image,scale = self.rectangles[rect]
+            if all:
+                x0 *= xscale
+                x1 *= xscale
+                y0 *= yscale
+                y1 *= yscale
+            else:
+                width = x1 - x0
+                height = y1 - y0
+                y1 = y0 + height * yscale
+                x1 = x0 + width * xscale
 
-    def rescale_rectangles(self,event):
-        for idx, r in enumerate(self.rectangles):
-            x0,y0,x1,y1,fill,image,scaled_image,scale = r
-            x = float(self.scale_vars["X Scale"].get())
-            y = float(self.scale_vars["Y Scale"].get())
-            x0 *= x
-            x1 *= x
-            y0 *= y
-            y1 *= y
-            self.rectangles[idx] = (int(x0),int(y0),int(x1),int(y1),fill,image,scaled_image,scale)
-            self.redraw()
+            x0 += xmove
+            x1 += xmove
+            y0 += ymove
+            y1 += ymove
+
+            self.rectangles[rect] = (int(x0),int(y0),int(x1),int(y1),fill,image,scaled_image,scale)
 
 
+    def handle_translation(self,xscale,yscale,xmove,ymove,all):
+        if all:
+            for idx, r in enumerate(self.rectangles):
+                self.apply_translations(idx,xscale,yscale,xmove,ymove,all)
+        else:
+            if self.selected_rect is not None:
+                self.apply_translations(self.selected_rect,xscale,yscale,xmove,ymove,all)
+        
+        self.save_undo_state()
+        self.redraw()
+        self.update_rectangle_list()
+        self.update_window_title()
 
     def debug_key(self,event):
         print(f"Key pressed: keysym={event.keysym}, keycode={event.keycode}, char={event.char}")
@@ -240,14 +311,24 @@ class RectangleTool:
             return
 
         with open(file, "w") as f:
+            write_custom_data = self.output_scale != 1.0
+            if write_custom_data:
+                f.write(f"output_scale {self.output_scale}\n")
             f.write("Rectangles\n{\n")
             for r in self.rectangles:
                 x0, y0, x1, y1,*_ = r
+                if write_custom_data:
+                    x0 = int(x0 * self.output_scale)
+                    y0 = int(y0 * self.output_scale)
+                    x1 = int(x1 * self.output_scale)
+                    y1 = int(y1 * self.output_scale)
+                
                 f.write("\trectangle\n\t{\n")
                 f.write(f"\t\t\"min\" \"{x0} {y0}\"\n")
                 f.write(f"\t\t\"max\" \"{x1} {y1}\"\n")
                 f.write("\t}\n")
             f.write("}")
+            
         self.current_rect_file = file
         self.update_window_title()
 
@@ -339,6 +420,15 @@ class RectangleTool:
 
             while i < len(lines):
                 line = lines[i].strip()
+                if line.startswith("output_scale"):
+                    parts = line.split()
+                    if len(parts) > 1:
+                        scale = float(parts[1])
+                        print(f"scale {scale}")
+                        i += 1
+                else:
+                    scale = 1.0
+
                 if line == "rectangle":
                     if i + 1 < len(lines) and lines[i + 1].strip() == "{":
                         min_line = lines[i + 2].strip()
@@ -349,6 +439,11 @@ class RectangleTool:
 
                         x0, x1 = sorted((x0, x1))
                         y0, y1 = sorted((y0, y1))
+
+                        x0 = int(x0/scale)
+                        x1 = int(x1/scale)
+                        y0 = int(y0/scale)
+                        y1 = int(y1/scale)
 
                         fill = self.random_color()
                         width = x1 - x0
@@ -368,6 +463,7 @@ class RectangleTool:
             self.selected_rect = None
             self.redraw_background = True
             self.current_rect_file = file
+            self.output_scale = 1.0
             self.redraw()
             print(f"Imported {len(self.rectangles)} rectangles from file.")
         except Exception as e:
@@ -433,8 +529,30 @@ class RectangleTool:
     def on_middle_mouse_release(self,event):
         self.canvas.config(cursor="arrow")
 
+
+    def within_selection_bounds(self,x,y,rect):
+        x0,y0,x1,y1 = rect
+        
+        w = x1 - x0
+        h = y1 - y0
+
+        margin_x = (w / 2) * 0.25
+        margin_y = (h / 2) * 0.25
+
+        inner_x0 = x0 + margin_x
+        inner_x1 = x1 - margin_x
+        inner_y0 = y0 + margin_y
+        inner_y1 = y1 - margin_y
+
+        print(f"Margin: {margin_x} {margin_y}")
+        print(f"Safe Coords: {inner_x0} {inner_y0} x {inner_x1} {inner_y1}")
+        print(f"mouse pos {x} {y}")
+
+        return inner_x0 <= x <= inner_x1 and inner_y0 <= y <= inner_y1
+    
     def on_left_mouse_down(self, event):
         x, y = self.to_image_coords(event.x, event.y)
+        print(f"Clickpos {event.x} {event.y}")
 
         if self.image is None:
             return
@@ -447,12 +565,8 @@ class RectangleTool:
             self.canvas.config(cursor="cross")
             return
 
-        
-        self.resize_mode = None
-        self.selected_rect = None
-        
-
-        for idx, (x0,y0,x1,y1,fill,image,scaled_image,zoom) in enumerate(self.rectangles):
+        if self.selected_rect is not None:
+            x0,y0,x1,y1,*_ = self.rectangles[self.selected_rect]
             corners = {
                 'nw': (x0,y0),
                 'ne':(x1,y0),
@@ -462,17 +576,21 @@ class RectangleTool:
             for mode,(cx,cy) in corners.items():
                 sx,sy = self.to_screen_coords(cx,cy)
                 if abs(event.x - sx) <= self.handle_size and abs(event.y - sy) <= self.handle_size:
-                    self.selected_rect = idx
+                    print("clicking corner")
                     self.resize_mode = mode
                     self.save_undo_state()
                     return
                 
+        self.resize_mode = None
+        self.selected_rect = None
+                
         for idx, (x0,y0,x1,y1,fill,image,scale_image,zoom) in enumerate(self.rectangles):
-            if x0 <= x <= x1 and y0 <= y <= y1:
-                 self.selected_rect = idx
-                 self.drag_offset = (x - x0, y - y0)
-                 self.save_undo_state()
-                 break
+            print(f"{x0} {y0} x {x1} {y1}")
+            if self.within_selection_bounds(x,y,(x0,y0,x1,y1)):
+                self.selected_rect = idx
+                self.drag_offset = (x - x0, y - y0)
+                self.save_undo_state()
+                break
             
 
         
@@ -482,6 +600,7 @@ class RectangleTool:
         
     def grid_snap_value(self,value):
         return math.ceil(self.grid_size * round(value/self.grid_size))
+    
     def on_left_mouse_drag(self, event):
         if self.image is None:
             return
@@ -538,16 +657,33 @@ class RectangleTool:
                     x1 = self.grid_snap_value(x1)
                     y1 = self.grid_snap_value(y1)
             else:
+                imagewidth = self.image.width
+                imageheight = self.image.height
                 dx, dy = self.drag_offset
                 x0 = x - dx
                 y0 = y - dy
+                
+                if x0 <= 0:
+                    x0 = 0
+                if y0 <= 0:
+                    y0 = 0
+                
                 if self.draw_grid is True:
                     x0 = self.grid_snap_value(x0)
                     y0 = self.grid_snap_value(y0)
                 width = rect[2] - rect[0]
                 height = rect[3] - rect[1]
+
                 x1 = x0 + width
+                if x1 >= imagewidth:
+                    x1 = imagewidth
+                    x0 = x1 - width
+                
                 y1 = y0 + height
+                if y1 >= imageheight:
+                    y1 = imageheight
+                    y0 = y1 - height
+
             self.rectangles[self.selected_rect] = (x0,y0,x1,y1,fill,image,scaled_image,self.scale)
             self.update_rectangle_list()
             self.redraw()
@@ -675,11 +811,6 @@ class RectangleTool:
                 if self.transparent_rectangles[idx] is not None:
                     self.canvas.delete(self.transparent_rectangles[idx])
                     self.transparent_rectangles[idx] = None
-                   # tags = self.canvas.gettags(self.transparent_rectangles[idx])
-                   # if "rectangles" in tags:
-                    #    self.canvas.dtag(self.transparent_rectangles[idx],"rectangles")
-                     #   self.transparent_rectangles[idx] = None
-                      #  print("Trans Rect outside screen, deleting\n")
                 continue
 
             w = int(x1 - x0)
