@@ -1,5 +1,6 @@
 from tkinterdnd2 import DND_FILES, TkinterDnD
 import tkinter as tk
+from tkinter import colorchooser
 from tkinter import filedialog, messagebox
 from PIL import Image, ImageTk
 from sourcepp import vtfpp
@@ -60,6 +61,8 @@ class RectangleTool:
         self.start_y = 0
         self.copied_rect = None
 
+        self.grid_color = "gray"
+
         self.unsaved_changes = False
         self.redraw_background = False
 
@@ -119,9 +122,13 @@ class RectangleTool:
         menu.add_cascade(label="Edit",menu=edit_menu)
 
         tools_menu = tk.Menu(menu,tearoff=0)
-        tools_menu.add_command(label="Move/Translate",command=self.open_scale_window,accelerator = "Ctrl+M")
-        tools_menu.add_command(label="Special Save",command=self.open_custom_save_window)
         menu.add_cascade(label="Tools",menu=tools_menu)
+        tools_menu.add_command(label="Move/Scale",command=self.open_scale_window,accelerator = "Ctrl+M")
+        tools_menu.add_command(label="Choose Grid Color",command=self.open_grid_color_picker)
+        tools_menu.add_separator()
+        tools_menu.add_command(label="Special Save",command=self.open_custom_save_window)
+        
+        
 
     def bind_events(self):
         self.canvas.bind("<Button-1>", self.on_left_mouse_down)
@@ -156,6 +163,11 @@ class RectangleTool:
     
     def open_image_error_window(self):
         messagebox.showinfo("Message","You tried to open a .rect file without an image loaded. Open an image first!")
+    def open_grid_color_picker(self):
+        picked_color = colorchooser.askcolor(title="Grid Color")
+        self.grid_color = picked_color[1]
+        self.redraw()
+
         
     def open_custom_save_window(self):
         window = tk.Toplevel(self.master)
@@ -795,6 +807,24 @@ class RectangleTool:
             
         self.canvas_images = []
 
+        if self.draw_grid:
+            spacing = self.grid_size * self.scale
+            step = 1
+            while spacing * step < 8:
+                step *= 2
+            
+            xcount = int(self.image.width / self.grid_size)
+            ycount = int(self.image.height / self.grid_size)
+            
+            for i in range(0,xcount+1,step):
+                x,y = self.to_screen_coords(i * self.grid_size,0)
+                x1,y1 = self.to_screen_coords(i * self.grid_size,self.image.height)
+                self.canvas.create_line(x,y,x1,y1,fill=str(self.grid_color),width=1,dash=(2, 2))
+            for i in range(0,ycount+1,step):
+                x,y = self.to_screen_coords(0,i * self.grid_size)
+                x1,y1 = self.to_screen_coords(self.image.width,i * self.grid_size)
+                self.canvas.create_line(x,y,x1,y1,fill=self.grid_color,width=1,dash=(2, 2))
+
         while len(self.transparent_rectangles) > len(self.rectangles):
             bogus_id = self.transparent_rectangles.pop()
             if bogus_id is not None:
@@ -867,19 +897,6 @@ class RectangleTool:
                             outline = "cyan", width = 1
                             )
                     
-
-        if self.draw_grid:
-            xcount = int(self.image.width / self.grid_size)
-            ycount = int(self.image.height / self.grid_size)
-
-            for i in range(xcount+1):
-                x,y = self.to_screen_coords(i * self.grid_size,0)
-                x1,y1 = self.to_screen_coords(i * self.grid_size,self.image.height)
-                self.canvas.create_line(x,y,x1,y1,fill="gray",width=1,dash=(2, 2))
-            for i in range(ycount+1):
-                x,y = self.to_screen_coords(0,i * self.grid_size)
-                x1,y1 = self.to_screen_coords(self.image.width,i * self.grid_size)
-                self.canvas.create_line(x,y,x1,y1,fill="gray",width=1,dash=(2, 2))
 
     def delete_selected_rectangle(self,event=None):
         if self.selected_rect is not None:
