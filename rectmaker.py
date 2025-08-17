@@ -6,15 +6,17 @@ from PIL import Image, ImageTk
 from sourcepp import vtfpp
 import random, copy, math, os, re
 from pathlib import Path
+import cv2
+import numpy as np
 
 
 supported_formats = (".png",".jpg",".jpeg",".bmp",".tif","tiff",".webp",".psd",".vtf")
 
-class RectangleTool:
+class RectMaker:
     def __init__(self, master):
         self.master = TkinterDnD.Tk() if master is None else master
         self.master.title("RectMaker")
-
+        
         self.canvas = tk.Canvas(master, bg="gray", cursor="arrow")
         self.canvas.drop_target_register(DND_FILES)
         self.canvas.dnd_bind("<<Drop>>", self.on_drop)
@@ -127,6 +129,7 @@ class RectangleTool:
         tools_menu.add_command(label="Choose Grid Color",command=self.open_grid_color_picker)
         tools_menu.add_separator()
         tools_menu.add_command(label="Special Save",command=self.open_custom_save_window)
+        tools_menu.add_command(label="Auto-Fill",command=self.open_autofill_window)
         
         
 
@@ -272,6 +275,185 @@ class RectangleTool:
         self.update_rectangle_list()
         self.update_window_title()
 
+    def open_autofill_window(self):
+        afwindow = tk.Toplevel(self.master)
+        threshold = tk.StringVar(afwindow,value="100")
+        types = ["Contour","Flood Fill","Canny"]
+        type = tk.StringVar(afwindow,value="Contour")
+
+        tk.OptionMenu(afwindow,type,*types).pack()
+        
+        tk.Label(afwindow,text="Threshold").pack()
+        tk.Scale(afwindow,from_=0,to_=200,orient="horizontal",variable=threshold).pack()
+
+        def UpdateAutoFill():
+            print("apply button pressed")
+            image = self.update_autofill(type.get(),threshold.get())
+        
+        def ApplyAutoFill():
+            image = self.update_autofill(type.get(),threshold.get())
+            if image is not None:
+                self.apply_auto_fill(image)
+        
+        
+        tk.Button(afwindow,text="Update",command=UpdateAutoFill).pack()
+        tk.Button(afwindow,text="Apply",command=ApplyAutoFill).pack()
+
+    def remap_value(self,value,smin,smax,dmin,dmax):
+        if smin == smax:
+            if value >= smax:
+                return dmin
+            else:
+                return dmax
+        
+        return dmin + (dmax - dmin) * (value - smin) / (smax - smin)
+    
+    def update_autofill(self,type,threshold):
+        if self.image is None:
+            return
+        self.save_undo_state()
+        self.rectangles.clear()
+        img_cv = cv2.cvtColor(np.array(self.image), cv2.COLOR_RGB2BGR)
+        thr = float(threshold)
+        
+
+        match type:
+            case "Flood Fill":
+                thr = self.remap_value(thr,0,200,1,20)
+                gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
+                color = cv2.fastNlMeansDenoisingColored(img_cv,None,10,10)
+                
+                _, thresh = cv2.threshold(gray, thr, 255, cv2.THRESH_BINARY_INV)
+                h,w = thresh.shape
+                mask = np.zeros((h+2, w+2), np.uint8)
+                low = (thr,thr,thr)
+                up = low
+
+                canny = cv2.Canny(color,threshold1=thr,threshold2=thr+25)
+                caninv = cv2.bitwise_not(canny)
+                
+                for y in range(h):
+                    for x in range(w):
+                        if caninv[x,y] == 255:
+                            fill_color = (
+                            random.randint(0, 255),
+                            random.randint(0, 255),
+                            random.randint(0, 255)
+                            )
+                            ##cv2.floodFill(caninv,mask,(x,y),fill_color,low,up)
+                
+                cv2.imshow("",caninv)
+                gray = cv2.cvtColor(canny,cv2.COLOR_BGR2GRAY)
+                return gray
+            
+            case "Contour":
+                gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
+
+                _, thresh = cv2.threshold(gray, thr, 255, cv2.THRESH_BINARY_INV)
+
+                inverted = cv2.bitwise_not(thresh)
+                cv2.imshow("",inverted)
+
+                return inverted
+            case "Canny":
+                canny = cv2.Canny(img_cv,threshold1=thr,threshold2=thr*2)
+                _,thresh = cv2.threshold(canny, thr, 255, cv2.THRESH_BINARY_INV)
+                cv2.imshow("",thresh)
+                return canny
+            case _:
+                return None
+
+        
+
+       
+
+    def apply_auto_fill(self,image):
+        
+        min_area = 144
+        contours, _ = cv2.findContours(image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        for cnt in contours:
+        # Approximate contour to polygon
+            approx = cv2.approxPolyDP(cnt, 8, True)
+
+        # Bounding rectangle
+            x, y, w, h = cv2.boundingRect(approx)
+            
+            x0 = self.grid_snap_value(x)
+            y0 = self.grid_snap_value(y)
+            x1 = self.grid_snap_value(x + w)
+            y1 = self.grid_snap_value(y + h)
+
+            w = x1-x0
+            h = y1-y0
+
+            if w * h < min_area:
+                continue
+        # Create transparent fill
+            fill = self.random_color()
+            rect_img = self.create_transparent_rectangle(w, h, fill)
+            zoomed_img = rect_img.resize((int(w * self.scale), int(h * self.scale)), Image.NEAREST)
+            tk_img = ImageTk.PhotoImage(zoomed_img)
+
+        # Append to rectangles list
+            self.rectangles.append((x0, y0, x1, y1, fill, rect_img, tk_img,self.scale))
+        self.update_rectangle_list()
+        self.redraw()
+    
+    def autofill_canny(self,threshold,range):
+        if self.image is None:
+            return
+        
+        self.save_undo_state()
+        threshold = float(threshold)
+        range = float(range)
+
+        min_area = 144
+
+        mini = threshold - range
+        maxi = threshold + range
+
+    # Convert Pillow image to OpenCV format (numpy array, BGR)
+        img_cv = cv2.cvtColor(np.array(self.image), cv2.COLOR_RGB2BGR)
+
+    # Convert to grayscale
+        gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
+
+    # Blur slightly to reduce noise
+        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+
+    # Detect edges
+        edges = cv2.Canny(blurred, threshold1=mini, threshold2=maxi)
+
+        cv2.imshow("",edges)
+
+    # Find contours
+        contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        count = 0
+        for cnt in contours:
+        # Approximate contour shape
+            approx = cv2.approxPolyDP(cnt, epsilon=3, closed=True)
+
+        # Get bounding rect
+            x, y, w, h = cv2.boundingRect(approx)
+
+            if w * h < min_area:
+                continue  # skip tiny detections
+
+        # Create transparent fill
+            self.grid_snap_value()
+            fill = self.random_color()
+            rect_img = self.create_transparent_rectangle(w, h, fill)
+            zoomed_img = rect_img.resize((int(w * self.scale), int(h * self.scale)), Image.NEAREST)
+            tk_img = ImageTk.PhotoImage(zoomed_img)
+
+        # Append rectangle
+            self.rectangles.append((x, y, x + w, y + h, fill, rect_img, tk_img,self.scale))
+            count += 1
+
+        self.update_rectangle_list()
+        self.redraw()
     def debug_key(self,event):
         print(f"Key pressed: keysym={event.keysym}, keycode={event.keycode}, char={event.char}")
 
@@ -512,8 +694,9 @@ class RectangleTool:
         return sx, sy
 
     def on_mouse_wheel(self, event):
-
         if not event.state & 0x0004:
+            self.offset_y += event.delta * 0.25
+            self.redraw()
             return
         
         zoom_factor = 1.1 if event.delta > 0 else 0.9
@@ -760,6 +943,7 @@ class RectangleTool:
             self.canvas.delete(item)
         
     # --- Redrawing Everything ---
+
     def redraw(self):
         self.clear_canvas()
         if not self.image:
@@ -1150,5 +1334,5 @@ class RectangleTool:
 
 if __name__ == "__main__":
     root = TkinterDnD.Tk()
-    app = RectangleTool(root)
+    app = RectMaker(root)
     root.mainloop()
